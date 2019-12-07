@@ -5,7 +5,7 @@ package Filter::Compiler;
 require Exporter;
 our @ISA = qw(Exporter);
 
-our @EXPORT_OK = qw(filter to_code convert_array convert_hash);
+our @EXPORT_OK = qw(filter to_code);
 
 use Text::Quote;
 use Clone 'clone';
@@ -68,7 +68,6 @@ sub convert_hash {
     }
     return @ret > 1 ? { $boo => \@ret } : $ret[0];
 }
-use Mojo::JSON qw/encode_json/;
 
 sub to_code {
     my $q = clone(shift);
@@ -79,8 +78,8 @@ sub to_code {
     	/ARRAY/ && do { $h = convert_array($q); last };
     };
 
-    print 'converted: ' . encode_json($h);
-    _to_code_recursive($h);
+    my $code = _to_code_recursive($h);
+    return 'sub { ' . $code . '}' 
 }
 
 sub _to_code_recursive {
@@ -113,27 +112,168 @@ sub filter_b {
     }
 
     my $code = _to_code_recursive($h);
-    return eval 'sub { ' . $code . '}' 
+    return eval 
 }
 
 sub filter {
     my $q = clone($_[0]);
 
     my $code = to_code($q);
-    return eval 'sub { ' . $code . '}' 
+    return eval $code 
 }
 
 
 =pod
+ 
+=encoding utf8
 
-1. hash with scalar
-2. hash with array
-3. hash with equality function
-4. hash with equality and array
+=head1 DESCRIPTION
+ 
+A module for compiling data structures into filter subroutine
+references à la SQL::Abstract
 
-return them all as field equality value
+=head1 SYNOPSIS
+
+    use Filter::Compiler qw/filter to_code/;
+
+    my $criteria = { tre => [ -and => { '!=', 3 }, { '!=', 4 } ] };
+
+    my @array = (); # array of hashes
+
+    my $sub = filter($criteria);
+
+    my @filtered = grep { $sub->($_) } @array;
+
+=head1 FUNCTIONS
+
+=head2 to_code
+
+    my $criteria = { tre => [ -and => { '!=', 3 }, { '!=', 4 } ] };
+
+    my $sub = to_code($criteria);
+    
+    print $sub;
+
+    # sub { ($_[0]->{tre} != 3 and $_[0]->{tre} != 4)}
+
+Converts a structure (arrayref or hash) to code that can be used to create a filter function;
+
+=head2 filter
+
+    my $criteria = { tre => [ -and => { '!=', 3 }, { '!=', 4 } ] };
+
+    my $sub = filter($criteria);
+
+    print $sub->({ tre => 5 })
+
+    # 1
+
+Converts a structure to a sub that can be used as filter
+
+=head1 Filter structures
+
+This module tries to behave as closely as possible to SQL::Abstract,
+but it may not be 100% compatible everywhere. The main logic of this
+module is that things in arrays are OR'ed, and things in hashes are
+AND'ed.
+
+=head3 Simple equality
+
+A hash like this
+
+    { tre => 3 }
+
+will result in
+
+    sub {
+        $_[0]{'tre'} == 3;
+    }
+
+
+and empty values are handled too so this
+
+    { tre => '' }
+
+will result in
+
+    sub {
+        $_[0]{'tre'} eq '';
+    }
+
+=head3 Lists of values
+
+Lists of values are or'ed so this
+
+    { tre => [ 3, 4 ] }
+
+will result in
+
+    sub {
+        $_[0]{'tre'} == 4 unless $_[0]{'tre'} == 3;
+    }
+
+and an array of hashes
+
+    [ { uno => 1 }, { due => 2 } ]
+
+will result in
+
+    sub {
+        $_[0]{'due'} == 2 unless $_[0]{'uno'} == 1;
+    }
+
+    { tre => [ -and => { '!=', 3 }, { '!=', 4 } ] }
+
+will result in
+
+    sub {
+        $_[0]{'tre'} != 4 && $_[0]{'tre'} != 3;
+    }
+
+=head3 Equality operators
+
+Equality operators are handled if put at the beginning of the hash
+used as the filter value  
+
+    { tre => { '<' => [ 3, 4 ] } }
+
+will result in
+
+    sub {
+        $_[0]{'tre'} < 4 or $_[0]{'tre'} < 3;
+    }
+
+and regexes are handled too so
+
+    { tre => { '=~' => [ qr/3/i, qr/4/ ] } }
+
+will result in
+
+    sub {
+        $_[0]{'tre'} =~ /(?^:4)/ or $_[0]{'tre'} =~ /(?^i:3)/;
+    }
+
+=head3 string and number values
+
+String values are handled so that 
+
+    { tre => { '>=' => [ '3', '4' ] } }
+
+will result in
+
+    sub {
+        $_[0]{'tre'} ge 4 or $_[0]{'tre'} ge 3;
+    }
+
+=head1 LICENSE
+
+This is released under the Artistic 
+License. See L<perlartistic>.
+
+=head1 AUTHOR
+
+simone
 
 =cut
-
 
 1;
